@@ -5,10 +5,13 @@
 #include "Camera/CameraComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Components/AudioComponent.h"
 #include "ChaosVehicleMovementComponent.h"
 #include "ChaosWheeledVehicleMovementComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Sound/SoundCue.h"
+#include <Kismet/GameplayStatics.h>
 
 AWheeledVehicle::AWheeledVehicle()
 {
@@ -19,13 +22,18 @@ AWheeledVehicle::AWheeledVehicle()
 	// Create a camera boom (pulls in towards the player if there is a collision)
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
-	CameraBoom->TargetArmLength = 1200.0f; // The camera follows at this distance behind the character	
+	CameraBoom->TargetArmLength = 200.0f; // The camera follows at this distance behind the character	
 	CameraBoom->bUsePawnControlRotation = true; // Rotate the arm based on the controller
 
 	// Create a follow camera
 	FollowCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("FollowCamera"));
 	FollowCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName); // Attach the camera to the end of the boom and let the boom adjust to match the controller orientation
 	FollowCamera->bUsePawnControlRotation = false; // Camera does not rotate relative to arm
+
+	AudioSource = CreateDefaultSubobject<UAudioComponent>(TEXT("AudioSource"));
+	AudioSource->bAutoActivate = false;
+	AudioSource->SetupAttachment(RootComponent);
+	AudioSource->SetRelativeLocation(FVector(100.0f, 0.0f, 0.0f));
 }
 
 void AWheeledVehicle::BeginPlay()
@@ -39,14 +47,24 @@ void AWheeledVehicle::BeginPlay()
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
 		}
 	}
-}
 
+	AudioSource->SetSound(EngineStart);
+	AudioSource->Play();
+	
+	FTimerHandle TimerHandle;
+	GetWorld()->GetTimerManager().SetTimer(TimerHandle, [&]()
+		{
+			AudioSource->SetSound(Engine);
+			m_IsEngineOn = true;
+		}, 3.0f, false);
+}
 
 void AWheeledVehicle::Throttle(const FInputActionValue& Value)
 {
-	float throttle = Value.Get<float>();
+	if (!m_IsEngineOn)
+		return;
 
-	GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Orange, *FString::SanitizeFloat(throttle));
+	float throttle = Value.Get<float>();
 
 	GetVehicleMovementComponent()->SetThrottleInput(throttle);
 }
@@ -54,8 +72,6 @@ void AWheeledVehicle::Throttle(const FInputActionValue& Value)
 void AWheeledVehicle::Steering(const FInputActionValue& Value)
 {
 	float steering = Value.Get<float>();
-
-	GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Blue, *FString::SanitizeFloat(steering));
 
 	GetVehicleMovementComponent()->SetSteeringInput(steering);
 }
@@ -87,6 +103,22 @@ void AWheeledVehicle::Look(const FInputActionValue& Value)
 void AWheeledVehicle::Tick(float deltaTime)
 {
 	Super::Tick(deltaTime);
+
+	if (!m_IsEngineOn)
+		return;
+
+	if (UChaosWheeledVehicleMovementComponent* Component = CastChecked<UChaosWheeledVehicleMovementComponent>(GetVehicleMovementComponent()))
+	{
+		float EngineRotationSpeed = Component->GetEngineRotationSpeed();
+
+		GEngine->AddOnScreenDebugMessage(-1, 5.0f, FColor::Blue, *FString::SanitizeFloat(EngineRotationSpeed));
+
+		if (EngineRotationSpeed < 600.0f)
+			EngineRotationSpeed = 600.0f;
+
+		AudioSource->SetFloatParameter(FName("RPM"), EngineRotationSpeed);
+	}
+
 }
 
 void AWheeledVehicle::SetupPlayerInputComponent(class UInputComponent* playerInputComponent)
